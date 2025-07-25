@@ -221,25 +221,25 @@ def download_missing_contacts_pdf():
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     pdf.set_font('Arial', 'B', 14)
-    pdf.cell(0, 10, 'Accounts Missing Contact Info', ln=1, align='C')
+    pdf.cell(0, 10, 'Accounts Missing Contact Info', ln=True, align='C')
     pdf.set_font('Arial', '', 10)
     pdf.ln(4)
     col_widths = [30, 60, 90, 50]  # Adjusted widths for Account No, Name, Email, Phone
     headers = ['Account No', 'Name', 'Email', 'Phone']
     for i, header in enumerate(headers):
-        pdf.cell(col_widths[i], 8, header, 1, 0, 'C')
+        pdf.cell(col_widths[i], 8, header, border=1, align='C')
     pdf.ln()
     for row in missing:
-        pdf.cell(col_widths[0], 8, str(row.get('acc_no', '')), 1)
-        pdf.cell(col_widths[1], 8, str(row.get('name', '')), 1)
+        pdf.cell(col_widths[0], 8, str(row.get('acc_no', '')), border=1)
+        pdf.cell(col_widths[1], 8, str(row.get('name', '')), border=1)
         # Use multi_cell for email and phone to wrap text if needed
         x = pdf.get_x(); y = pdf.get_y()
-        pdf.multi_cell(col_widths[2], 8, str(row.get('email', '')), 1, 'L')
+        pdf.multi_cell(col_widths[2], 8, str(row.get('email', '')), border=1, align='L')
         pdf.set_xy(x + col_widths[2], y)
-        pdf.multi_cell(col_widths[3], 8, str(row.get('phone', '')), 1, 'L')
+        pdf.multi_cell(col_widths[3], 8, str(row.get('phone', '')), border=1, align='L')
         # Move to next line for next row
         pdf.set_xy(10, y + 8)
-    pdf_output = 'missing_contacts.pdf'
+    pdf_output = os.path.join(UPLOAD_FOLDER, 'missing_contacts.pdf')
     pdf.output(pdf_output)
     return send_file(pdf_output, as_attachment=True, download_name='missing_contacts.pdf')
 
