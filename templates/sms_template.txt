@@ -1,0 +1,1 @@
+Hi {{ name }}, this is Reitz Apteek. Your account is overdue by R{{ balance }}. Please make payment or contact us. Thank you.
