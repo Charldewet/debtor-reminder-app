@@ -14,15 +14,4 @@ services:
       - key: SMSPORTAL_API_SECRET
         sync: false
       - key: SENDGRID_API_KEY
-        sync: false
-
-  # Frontend Service
-  - type: web
-    name: debtor-reminder-frontend
-    env: static
-    plan: free
-    buildCommand: cd frontend && npm install && npm run build
-    staticPublishPath: ./frontend/dist
-    envVars:
-      - key: VITE_API_URL
-        value: https://debtor-reminder-backend.onrender.com 
+        sync: false 
