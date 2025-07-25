@@ -1,0 +1,28 @@
+services:
+  # Backend API Service
+  - type: web
+    name: debtor-reminder-backend
+    env: python
+    plan: free
+    buildCommand: cd backend_api && pip install -r requirements.txt
+    startCommand: cd backend_api && gunicorn wsgi:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SMSPORTAL_CLIENT_ID
+        sync: false
+      - key: SMSPORTAL_API_SECRET
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+
+  # Frontend Service
+  - type: web
+    name: debtor-reminder-frontend
+    env: static
+    plan: free
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://debtor-reminder-backend.onrender.com 

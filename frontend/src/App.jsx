@@ -53,7 +53,7 @@ function App() {
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const res = await fetch('http://localhost:5001/upload', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -75,7 +75,7 @@ function App() {
   };
 
   const handleDownload = async () => {
-    const res = await fetch('http://localhost:5001/download', {
+    const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rows: filtered, min_balance: minBalance })
@@ -124,7 +124,7 @@ function App() {
     setSending(true);
     setSendResult(null);
     try {
-      const res = await fetch('http://localhost:5001/send_email', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/send_email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accounts: selectedAccounts })
@@ -141,7 +141,7 @@ function App() {
     setSending(true);
     setSendResult(null);
     try {
-      const res = await fetch('http://localhost:5001/send_sms', {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/send_sms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accounts: selectedAccounts })
@@ -156,7 +156,7 @@ function App() {
 
   const handleDownloadMissingContactsPDF = async () => {
     // Send all filtered rows to backend for PDF generation
-    const res = await fetch('http://localhost:5001/download_missing_contacts_pdf', {
+    const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/download_missing_contacts_pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rows: filtered })
@@ -172,7 +172,7 @@ function App() {
 
   const handleDownloadFilteredTablePDF = async () => {
     // Send filtered table data to backend for PDF generation
-    const res = await fetch('http://localhost:5001/download_filtered_table_pdf', {
+    const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5001'}/download_filtered_table_pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
