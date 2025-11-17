@@ -67,6 +67,10 @@ def send_email_via_sendgrid(to_email, subject, html_content):
     response = sg.client.mail.send.post(request_body=mail.get())
     return response.status_code
 
+@app.route('/', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'ok', 'message': 'Debtor Reminder API is running', 'version': '1.0'}), 200
+
 @app.route('/upload', methods=['POST'])
 def upload_pdf():
     if 'file' not in request.files:
