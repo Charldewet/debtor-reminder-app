@@ -12,6 +12,23 @@ This system integrates into your existing database with new tables to support mu
 
 Stores pharmacy information.
 
+**Option A: Shared Credentials (Recommended)**
+```sql
+CREATE TABLE pharmacies (
+    id VARCHAR(50) PRIMARY KEY,           -- Unique pharmacy ID (e.g., UUID or custom ID)
+    name VARCHAR(255) NOT NULL,            -- Pharmacy name
+    email VARCHAR(255),                    -- Contact email (used as "from" address)
+    phone VARCHAR(20),                     -- Contact phone
+    banking_account VARCHAR(50),           -- Bank account number for EFT
+    bank_name VARCHAR(100),                -- Bank name (e.g., "ABSA")
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+    -- Credentials stored as environment variables (shared across all pharmacies)
+);
+```
+
+**Option B: Per-Pharmacy Credentials (If needed)**
 ```sql
 CREATE TABLE pharmacies (
     id VARCHAR(50) PRIMARY KEY,           -- Unique pharmacy ID (e.g., UUID or custom ID)
@@ -20,14 +37,17 @@ CREATE TABLE pharmacies (
     phone VARCHAR(20),                     -- Contact phone
     banking_account VARCHAR(50),           -- Bank account number for EFT
     bank_name VARCHAR(100),                -- Bank name (e.g., "ABSA")
-    sendgrid_api_key VARCHAR(255),        -- SendGrid API key (encrypted)
-    smsportal_client_id VARCHAR(255),      -- SMS Portal client ID (encrypted)
-    smsportal_api_secret VARCHAR(255),     -- SMS Portal API secret (encrypted)
+    sendgrid_api_key VARCHAR(255),        -- SendGrid API key (encrypted) - Optional
+    smsportal_client_id VARCHAR(255),      -- SMS Portal client ID (encrypted) - Optional
+    smsportal_api_secret VARCHAR(255),     -- SMS Portal API secret (encrypted) - Optional
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE
+    -- If credentials are NULL, system uses shared environment variables
 );
 ```
+
+**Note:** See `CREDENTIALS_CONFIGURATION.md` for detailed explanation of both options.
 
 **Indexes:**
 ```sql

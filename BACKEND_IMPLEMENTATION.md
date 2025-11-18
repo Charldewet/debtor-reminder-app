@@ -27,7 +27,25 @@ python-dotenv==1.0.1
 fpdf==1.7.2
 sendgrid==6.11.0
 requests==2.32.4
-cryptography==41.0.0  # For encrypting API keys
+cryptography==41.0.0  # For encrypting API keys (only if using per-pharmacy credentials)
+```
+
+---
+
+## Credentials Configuration
+
+**Important:** You can use shared credentials for all pharmacies (recommended) or per-pharmacy credentials. See `CREDENTIALS_CONFIGURATION.md` for details.
+
+**Shared Credentials (Recommended):**
+- Store SendGrid and SMS Portal credentials as environment variables
+- All pharmacies use the same account
+- Simpler setup and management
+
+**Environment Variables:**
+```env
+SENDGRID_API_KEY=your_sendgrid_api_key
+SMSPORTAL_CLIENT_ID=your_client_id
+SMSPORTAL_API_SECRET=your_api_secret
 ```
 
 ---
@@ -50,13 +68,15 @@ class Pharmacy(Base):
     
     id = Column(String(50), primary_key=True)
     name = Column(String(255), nullable=False)
-    email = Column(String(255))
+    email = Column(String(255))  # Used as "from" email address
     phone = Column(String(20))
     banking_account = Column(String(50))
     bank_name = Column(String(100))
-    sendgrid_api_key = Column(String(255))  # Encrypted
-    smsportal_client_id = Column(String(255))  # Encrypted
-    smsportal_api_secret = Column(String(255))  # Encrypted
+    # Optional: Per-pharmacy credentials (if using Option B)
+    # If NULL, system uses shared environment variables
+    sendgrid_api_key = Column(String(255), nullable=True)  # Encrypted, optional
+    smsportal_client_id = Column(String(255), nullable=True)  # Encrypted, optional
+    smsportal_api_secret = Column(String(255), nullable=True)  # Encrypted, optional
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
@@ -507,8 +527,11 @@ def send_email(pharmacy_id):
     sent = []
     errors = []
     
-    # Decrypt API key
-    api_key = decrypt_api_key(pharmacy.sendgrid_api_key)
+    # Get SendGrid API key (pharmacy-specific or shared)
+    api_key = (
+        decrypt_api_key(pharmacy.sendgrid_api_key) if pharmacy.sendgrid_api_key
+        else os.environ.get('SENDGRID_API_KEY')
+    )
     
     for debtor in debtors:
         if not debtor.email:
@@ -589,7 +612,130 @@ def send_email(pharmacy_id):
 
 **POST** `/api/pharmacies/{pharmacy_id}/debtors/send-sms`
 
-Similar structure to email endpoint, using SMS Portal API.
+**Request:**
+```json
+{
+  "debtor_ids": [1, 2, 3],
+  "ageing_buckets": ["d60", "d90", "d120"],
+  "sms_template": "Hi {name}, your {pharmacy_name} account {acc_no} is overdue: R{amount}",
+  "template_variables": {
+    "pharmacy_name": "Reitz Apteek",
+    "bank_name": "ABSA",
+    "account_number": "4090014954"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "sent": [
+    {
+      "debtor_id": 1,
+      "phone": "0821234567",
+      "message": "Hi John Doe, your Reitz Apteek account...",
+      "status": "sent"
+    }
+  ],
+  "errors": []
+}
+```
+
+**Implementation:**
+```python
+@app.route('/api/pharmacies/<pharmacy_id>/debtors/send-sms', methods=['POST'])
+@require_pharmacy_access(pharmacy_id)
+def send_sms(pharmacy_id):
+    data = request.json
+    debtor_ids = data.get('debtor_ids', [])
+    ageing_buckets = data.get('ageing_buckets', ['d60', 'd90', 'd120', 'd150', 'd180'])
+    
+    # Get pharmacy info
+    pharmacy = db.session.query(Pharmacy).filter_by(id=pharmacy_id).first()
+    if not pharmacy:
+        return jsonify({'error': 'Pharmacy not found'}), 404
+    
+    # Get SMS template
+    sms_template = data.get('sms_template', None)
+    template_vars = data.get('template_variables', {})
+    template_vars.setdefault('pharmacy_name', pharmacy.name)
+    template_vars.setdefault('bank_name', pharmacy.bank_name or 'ABSA')
+    template_vars.setdefault('account_number', pharmacy.banking_account or '')
+    
+    # Get SMS Portal token (shared credentials from environment)
+    try:
+        token = get_smsportal_token()
+    except Exception as e:
+        return jsonify({'error': f'Failed to get SMSPortal token: {str(e)}'}), 500
+    
+    # Get debtors
+    debtors = db.session.query(Debtor).filter(
+        Debtor.pharmacy_id == pharmacy_id,
+        Debtor.id.in_(debtor_ids),
+        Debtor.is_medical_aid_control == False
+    ).all()
+    
+    sent = []
+    errors = []
+    
+    for debtor in debtors:
+        if not debtor.phone:
+            errors.append({'debtor_id': debtor.id, 'error': 'No phone number'})
+            continue
+        
+        # Calculate arrears
+        arrears_60_plus = sum([
+            float(getattr(debtor, bucket)) for bucket in ageing_buckets
+        ])
+        
+        # Prepare variables
+        debtor_vars = {
+            **template_vars,
+            'name': debtor.name,
+            'acc_no': debtor.acc_no,
+            'amount': f"{arrears_60_plus:,.2f}",
+        }
+        
+        # Render message
+        if sms_template:
+            message = render_template_string(sms_template, **debtor_vars)
+        else:
+            message = f"Hi {debtor.name}, your {pharmacy.name} account is overdue (60+ days): R{arrears_60_plus:,.2f}. EFT {pharmacy.bank_name} {pharmacy.banking_account}. Ref {debtor.acc_no}. Thanks!"
+        
+        # Truncate if too long
+        if len(message) > 160:
+            message = message[:157] + "..."
+        
+        try:
+            # Send SMS using shared credentials
+            resp = send_smsportal_sms(debtor.phone, message, token)
+            
+            # Log communication
+            log = CommunicationLog(
+                pharmacy_id=pharmacy_id,
+                debtor_id=debtor.id,
+                communication_type='sms',
+                recipient=debtor.phone,
+                message=message,
+                status='sent',
+                external_id=str(resp.get('id', '')),
+                sent_at=datetime.utcnow()
+            )
+            db.session.add(log)
+            
+            sent.append({
+                'debtor_id': debtor.id,
+                'phone': debtor.phone,
+                'message': message,
+                'status': 'sent'
+            })
+            
+        except Exception as e:
+            errors.append({'debtor_id': debtor.id, 'error': str(e)})
+    
+    db.session.commit()
+    return jsonify({'sent': sent, 'errors': errors})
+```
 
 ---
 
@@ -672,7 +818,89 @@ def debtor_to_dict(debtor):
     }
 ```
 
-### API Key Encryption
+### Shared Credentials Helper Functions
+
+```python
+import os
+import sendgrid
+from sendgrid.helpers.mail import Mail, Email, To, Content
+import requests
+import base64
+
+# Shared credentials from environment variables
+SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
+SMSPORTAL_CLIENT_ID = os.environ.get('SMSPORTAL_CLIENT_ID')
+SMSPORTAL_API_SECRET = os.environ.get('SMSPORTAL_API_SECRET')
+
+def get_smsportal_token():
+    """Get OAuth2 token using shared SMS Portal credentials."""
+    url = 'https://rest.smsportal.com/authentication'
+    auth_str = f"{SMSPORTAL_CLIENT_ID}:{SMSPORTAL_API_SECRET}"
+    b64_auth = base64.b64encode(auth_str.encode()).decode()
+    
+    headers = {
+        'Authorization': f'Basic {b64_auth}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    payload = {'grant_type': 'client_credentials'}
+    response = requests.post(url, data=payload, headers=headers)
+    response.raise_for_status()
+    token_data = response.json()
+    return token_data.get('access_token') or token_data.get('token')
+
+
+def send_smsportal_sms(phone, message, token=None):
+    """Send SMS using shared SMS Portal credentials."""
+    if not token:
+        token = get_smsportal_token()
+    
+    url = 'https://rest.smsportal.com/v1/bulkmessages'
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    
+    payload = {
+        'messages': [
+            {
+                'content': message,
+                'destination': phone
+            }
+        ]
+    }
+    
+    response = requests.post(url, json=payload, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
+def send_email_via_sendgrid(to_email, subject, html_content, from_email=None, from_name=None):
+    """
+    Send email using shared SendGrid credentials.
+    
+    Args:
+        to_email: Recipient email
+        subject: Email subject
+        html_content: HTML email content
+        from_email: From email (uses pharmacy email if provided, else default)
+        from_name: From name (uses pharmacy name if provided, else default)
+    """
+    sg = sendgrid.SendGridAPIClient(SENDGRID_API_KEY)
+    
+    # Use provided from_email or default
+    from_addr = Email(
+        from_email or 'no-reply@yourdomain.com',
+        from_name or 'Debtor Reminder System'
+    )
+    
+    to = To(to_email)
+    mail = Mail(from_addr, to, subject, Content('text/html', html_content))
+    response = sg.client.mail.send.post(request_body=mail.get())
+    return response.status_code
+```
+
+### API Key Encryption (Only if using per-pharmacy credentials)
 
 ```python
 from cryptography.fernet import Fernet

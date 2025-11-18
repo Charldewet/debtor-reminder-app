@@ -58,12 +58,39 @@ def send_smsportal_sms(phone, message, token=None):
     response.raise_for_status()
     return response.json()
 
-def send_email_via_sendgrid(to_email, subject, html_content):
+def render_template_string(template, **kwargs):
+    """Simple template rendering using string format. Supports {variable} placeholders."""
+    if not template:
+        return ""
+    try:
+        return template.format(**kwargs)
+    except KeyError as e:
+        # If variable not found, leave placeholder as-is
+        import re
+        return re.sub(r'\{' + str(e.args[0]) + r'\}', f'{{{e.args[0]}}}', template)
+
+def send_email_via_sendgrid(to_email, subject, html_content, from_email, from_name):
+    """
+    Send email using shared SendGrid credentials.
+    
+    Args:
+        to_email: Recipient email
+        subject: Email subject
+        html_content: HTML email content
+        from_email: From email (required)
+        from_name: From name (required)
+    """
     api_key = os.environ.get('SENDGRID_API_KEY')
+    if not api_key:
+        raise ValueError("SENDGRID_API_KEY not set in environment variables")
+    
+    if not from_email or not from_name:
+        raise ValueError("from_email and from_name are required")
+    
     sg = sendgrid.SendGridAPIClient(api_key)
-    from_email = Email('no-reply@em8172.pharmasight.co.za', 'Reitz Apteek')
+    from_addr = Email(from_email, from_name)
     to = To(to_email)
-    mail = Mail(from_email, to, subject, Content('text/html', html_content))
+    mail = Mail(from_addr, to, subject, Content('text/html', html_content))
     response = sg.client.mail.send.post(request_body=mail.get())
     return response.status_code
 
@@ -249,70 +276,203 @@ def download_missing_contacts_pdf():
 
 @app.route('/send_email', methods=['POST'])
 def send_email():
+    """
+    Send emails to selected debtors.
+    
+    Request body:
+    {
+        "accounts": [...],  // Array of debtor account objects
+        "email_template": {  // Optional: Custom template
+            "subject": "Reminder: Account Overdue at {pharmacy_name}",
+            "html_body": "<p>Dear {name},...</p>"
+        },
+        "template_variables": {  // REQUIRED: Template variables (no hardcoded defaults)
+            "pharmacy_name": "Your Pharmacy Name",        // Required
+            "bank_name": "ABSA",                          // Required
+            "account_number": "123 456 7890",            // Required
+            "pharmacy_email": "info@pharmacy.com",       // Required
+            "pharmacy_phone": "012 345 6789"             // Required
+        }
+    }
+    """
     accounts = request.json.get('accounts', [])
+    email_template = request.json.get('email_template', {})
+    template_vars = request.json.get('template_variables', {})
+    
+    # Validate required template variables
+    required_vars = ['pharmacy_name', 'bank_name', 'account_number', 'pharmacy_email', 'pharmacy_phone']
+    missing_vars = [var for var in required_vars if not template_vars.get(var)]
+    
+    if missing_vars:
+        return jsonify({
+            'status': 'error',
+            'error': f'Missing required template variables: {", ".join(missing_vars)}',
+            'required_variables': required_vars
+        }), 400
+    
     sent = []
     errors = []
+    
     for acc in accounts:
-        print("Processing account:", acc)  # Debug print
         email_addr = acc.get('email', '') or acc.get('Email', '')
         email_addr = email_addr.strip()
-        arrears_60_plus = sum([acc.get(k, 0) for k in ['d60', 'd90', 'd120', 'd150', 'd180']])
-        subject = "Reminder: Account Overdue at Reitz Apteek"
-        html_msg = f"""
-        <p>Dear {acc.get('name', 'Customer')},</p>
-        <p>We hope you’re well. This is a reminder that your account at <b>Reitz Apteek</b> shows an outstanding balance of <b>R{arrears_60_plus:,.2f}</b>, which has been overdue for more than 60 days.</p>
-        <p>We kindly request that payment be made at your earliest convenience using the EFT details below:</p>
-        <hr>
-        <p>
-        <b>Banking Details:</b><br>
-        Bank: ABSA<br>
-        Account Number: 409 0014 954<br>
-        Reference: {acc.get('acc_no')}
-        </p>
-        <hr>
-        <p>If you’ve already made this payment or require a statement, please feel free to contact us.</p>
-        <p>Thank you for your continued support.</p>
-        <p style='margin-top:24px;'>
-        Warm regards,<br>
-        <b>Reitz Apteek Team</b><br>
-        <a href='mailto:charl@thelocalchoice.co.za'>charl@thelocalchoice.co.za</a><br>
-        058 863 2801
-        </p>
-        """
+        
         if not email_addr:
             errors.append({'acc_no': acc.get('acc_no'), 'error': 'No email address'})
             continue
+        
+        # Calculate arrears
+        arrears_60_plus = sum([acc.get(k, 0) for k in ['d60', 'd90', 'd120', 'd150', 'd180']])
+        
+        # Prepare debtor-specific variables
+        debtor_vars = {
+            **template_vars,
+            'name': acc.get('name', 'Customer'),
+            'acc_no': acc.get('acc_no', ''),
+            'amount': f"{arrears_60_plus:,.2f}",
+            'arrears_amount': f"{arrears_60_plus:,.2f}",
+        }
+        
+        # Render subject and body (use custom template or default)
+        if email_template.get('subject'):
+            subject = render_template_string(email_template['subject'], **debtor_vars)
+        else:
+            # Default subject using pharmacy name from template_vars
+            subject = f"Reminder: Account Overdue at {template_vars['pharmacy_name']}"
+        
+        if email_template.get('html_body'):
+            html_msg = render_template_string(email_template['html_body'], **debtor_vars)
+        else:
+            # Default template
+            html_msg = f"""
+            <p>Dear {debtor_vars['name']},</p>
+            <p>We hope you're well. This is a reminder that your account at <b>{template_vars['pharmacy_name']}</b> shows an outstanding balance of <b>R{arrears_60_plus:,.2f}</b>, which has been overdue for more than 60 days.</p>
+            <p>We kindly request that payment be made at your earliest convenience using the EFT details below:</p>
+            <hr>
+            <p>
+            <b>Banking Details:</b><br>
+            Bank: {template_vars['bank_name']}<br>
+            Account Number: {template_vars['account_number']}<br>
+            Reference: {debtor_vars['acc_no']}
+            </p>
+            <hr>
+            <p>If you've already made this payment or require a statement, please feel free to contact us.</p>
+            <p>Thank you for your continued support.</p>
+            <p style='margin-top:24px;'>
+            Warm regards,<br>
+            <b>{template_vars['pharmacy_name']} Team</b><br>
+            <a href='mailto:{template_vars['pharmacy_email']}'>{template_vars['pharmacy_email']}</a><br>
+            {template_vars['pharmacy_phone']}
+            </p>
+            """
+        
         try:
-            status = send_email_via_sendgrid(email_addr, subject, html_msg)
-            sent.append({'acc_no': acc.get('acc_no'), 'email': email_addr, 'message': html_msg, 'status': status})
+            # Use pharmacy email as "from" if available
+            from_email = template_vars.get('pharmacy_email')
+            from_name = template_vars.get('pharmacy_name')
+            
+            status = send_email_via_sendgrid(email_addr, subject, html_msg, from_email, from_name)
+            sent.append({
+                'acc_no': acc.get('acc_no'),
+                'email': email_addr,
+                'subject': subject,
+                'status': status
+            })
         except Exception as e:
-            errors.append({'acc_no': acc.get('acc_no'), 'email': email_addr, 'error': str(e)})
+            errors.append({
+                'acc_no': acc.get('acc_no'),
+                'email': email_addr,
+                'error': str(e)
+            })
+    
     return jsonify({'status': 'ok', 'sent': sent, 'errors': errors})
 
 @app.route('/send_sms', methods=['POST'])
 def send_sms():
+    """
+    Send SMS to selected debtors.
+    
+    Request body:
+    {
+        "accounts": [...],  // Array of debtor account objects
+        "sms_template": "Hi {name}, your {pharmacy_name} account {acc_no} is overdue: R{amount}",  // Optional
+        "template_variables": {  // REQUIRED: Template variables (no hardcoded defaults)
+            "pharmacy_name": "Your Pharmacy Name",  // Required
+            "bank_name": "ABSA",                    // Required
+            "account_number": "1234567890"          // Required
+        }
+    }
+    """
     accounts = request.json.get('accounts', [])
+    sms_template = request.json.get('sms_template', None)
+    template_vars = request.json.get('template_variables', {})
+    
+    # Validate required template variables
+    required_vars = ['pharmacy_name', 'bank_name', 'account_number']
+    missing_vars = [var for var in required_vars if not template_vars.get(var)]
+    
+    if missing_vars:
+        return jsonify({
+            'status': 'error',
+            'error': f'Missing required template variables: {", ".join(missing_vars)}',
+            'required_variables': required_vars
+        }), 400
+    
     sent = []
     errors = []
+    
+    # Get SMS Portal token (shared credentials from environment)
     token = None
     try:
         token = get_smsportal_token()
     except Exception as e:
         print("Token error:", e)
         return jsonify({'status': 'error', 'error': f'Failed to get SMSPortal token: {str(e)}'}), 500
+    
     for acc in accounts:
-        arrears_60_plus = sum([acc.get(k, 0) for k in ['d60', 'd90', 'd120', 'd150', 'd180']])
-        msg = f"Hi {acc.get('name', 'Customer')}, your REITZ APTEEK account is overdue (60+ days): R{arrears_60_plus:,.2f}. EFT ABSA 4090014954. Ref {acc.get('acc_no')}. Thanks!"
         phone = acc.get('phone', None)
         if not phone:
             errors.append({'acc_no': acc.get('acc_no'), 'error': 'No phone number'})
             continue
+        
+        # Calculate arrears
+        arrears_60_plus = sum([acc.get(k, 0) for k in ['d60', 'd90', 'd120', 'd150', 'd180']])
+        
+        # Prepare debtor-specific variables
+        debtor_vars = {
+            **template_vars,
+            'name': acc.get('name', 'Customer'),
+            'acc_no': acc.get('acc_no', ''),
+            'amount': f"{arrears_60_plus:,.2f}",
+        }
+        
+        # Render message (use custom template or default)
+        if sms_template:
+            msg = render_template_string(sms_template, **debtor_vars)
+        else:
+            # Default template
+            msg = f"Hi {debtor_vars['name']}, your {template_vars['pharmacy_name']} account is overdue (60+ days): R{arrears_60_plus:,.2f}. EFT {template_vars['bank_name']} {template_vars['account_number']}. Ref {debtor_vars['acc_no']}. Thanks!"
+        
+        # Truncate if too long (SMS limit is 160 characters)
+        if len(msg) > 160:
+            msg = msg[:157] + "..."
+        
         try:
             resp = send_smsportal_sms(phone, msg, token)
-            sent.append({'acc_no': acc.get('acc_no'), 'phone': phone, 'message': msg, 'smsportal_response': resp})
+            sent.append({
+                'acc_no': acc.get('acc_no'),
+                'phone': phone,
+                'message': msg,
+                'status': 'sent'
+            })
         except Exception as e:
             print("SMS error:", e)
-            errors.append({'acc_no': acc.get('acc_no'), 'phone': phone, 'error': str(e)})
+            errors.append({
+                'acc_no': acc.get('acc_no'),
+                'phone': phone,
+                'error': str(e)
+            })
+    
     return jsonify({'status': 'ok', 'sent': sent, 'errors': errors})
 
 if __name__ == '__main__':
