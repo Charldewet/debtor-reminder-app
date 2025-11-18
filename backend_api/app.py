@@ -321,8 +321,14 @@ def send_email():
             errors.append({'acc_no': acc.get('acc_no'), 'error': 'No email address'})
             continue
         
-        # Calculate arrears
+        # Calculate arrears (60+ days)
         arrears_60_plus = sum([acc.get(k, 0) for k in ['d60', 'd90', 'd120', 'd150', 'd180']])
+        
+        # Calculate total outstanding balance (all ageing buckets)
+        total_balance = (
+            acc.get('balance', 0) or 
+            sum([acc.get(k, 0) for k in ['current', 'd30', 'd60', 'd90', 'd120', 'd150', 'd180']])
+        )
         
         # Prepare debtor-specific variables
         debtor_vars = {
@@ -331,6 +337,7 @@ def send_email():
             'acc_no': acc.get('acc_no', ''),
             'amount': f"{arrears_60_plus:,.2f}",
             'arrears_amount': f"{arrears_60_plus:,.2f}",
+            'total_balance': f"{total_balance:,.2f}",
         }
         
         # Render subject and body (use custom template or default)
@@ -347,6 +354,7 @@ def send_email():
             html_msg = f"""
             <p>Dear {debtor_vars['name']},</p>
             <p>We hope you're well. This is a reminder that your account at <b>{template_vars['pharmacy_name']}</b> shows an outstanding balance of <b>R{arrears_60_plus:,.2f}</b>, which has been overdue for more than 60 days.</p>
+            <p><b>Total balance (Total outstanding amount): R{debtor_vars['total_balance']}</b></p>
             <p>We kindly request that payment be made at your earliest convenience using the EFT details below:</p>
             <hr>
             <p>
@@ -435,8 +443,14 @@ def send_sms():
             errors.append({'acc_no': acc.get('acc_no'), 'error': 'No phone number'})
             continue
         
-        # Calculate arrears
+        # Calculate arrears (60+ days)
         arrears_60_plus = sum([acc.get(k, 0) for k in ['d60', 'd90', 'd120', 'd150', 'd180']])
+        
+        # Calculate total outstanding balance (all ageing buckets)
+        total_balance = (
+            acc.get('balance', 0) or 
+            sum([acc.get(k, 0) for k in ['current', 'd30', 'd60', 'd90', 'd120', 'd150', 'd180']])
+        )
         
         # Prepare debtor-specific variables
         debtor_vars = {
@@ -444,6 +458,7 @@ def send_sms():
             'name': acc.get('name', 'Customer'),
             'acc_no': acc.get('acc_no', ''),
             'amount': f"{arrears_60_plus:,.2f}",
+            'total_balance': f"{total_balance:,.2f}",
         }
         
         # Render message (use custom template or default)
@@ -451,7 +466,7 @@ def send_sms():
             msg = render_template_string(sms_template, **debtor_vars)
         else:
             # Default template
-            msg = f"Hi {debtor_vars['name']}, your {template_vars['pharmacy_name']} account is overdue (60+ days): R{arrears_60_plus:,.2f}. EFT {template_vars['bank_name']} {template_vars['account_number']}. Ref {debtor_vars['acc_no']}. Thanks!"
+            msg = f"Hi {debtor_vars['name']}, your {template_vars['pharmacy_name']} account is overdue (60+ days): R{arrears_60_plus:,.2f}. Total balance (Total outstanding amount): R{debtor_vars['total_balance']}. EFT {template_vars['bank_name']} {template_vars['account_number']}. Ref {debtor_vars['acc_no']}. Thanks!"
         
         # Truncate if too long (SMS limit is 160 characters)
         if len(msg) > 160:

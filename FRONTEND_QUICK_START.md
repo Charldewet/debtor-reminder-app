@@ -163,8 +163,9 @@ Each account object in the `accounts` array should have:
 |----------|-------------|---------|--------------|
 | `{name}` | Customer name | "John Doe" | Auto-filled |
 | `{acc_no}` | Account number | "123456" | Auto-filled |
-| `{amount}` | Outstanding amount (formatted) | "1,234.56" | Auto-filled |
-| `{arrears_amount}` | Arrears amount (formatted) | "1,234.56" | Auto-filled |
+| `{amount}` | 60+ days arrears amount (formatted) | "1,234.56" | Auto-filled |
+| `{arrears_amount}` | 60+ days arrears amount (formatted) | "1,234.56" | Auto-filled |
+| `{total_balance}` | Total outstanding balance (all ageing buckets) | "2,500.00" | Auto-filled |
 | `{pharmacy_name}` | Pharmacy name | "Your Pharmacy" | ✅ Required |
 | `{bank_name}` | Bank name | "ABSA" | ✅ Required |
 | `{account_number}` | Bank account number | "123 456 7890" | ✅ Required |
@@ -394,7 +395,12 @@ export default DebtorCommunication;
 
 ## Using Default Templates
 
-If you don't provide custom templates, the backend uses default templates. However, **you still must provide template_variables**:
+If you don't provide custom templates, the backend uses default templates. However, **you still must provide template_variables**.
+
+**Note:** Default templates now include:
+- 60+ days arrears amount: `{amount}`
+- **Total balance (Total outstanding amount): `{total_balance}`** ⭐
+- Banking details
 
 ```javascript
 // Use default templates but provide required variables
@@ -407,6 +413,8 @@ const templateVars = {
 };
 
 const response = await commService.sendEmail(selectedDebtors, null, templateVars);
+// Default email will include: 60+ days arrears AND total balance
+
 // or for SMS
 const smsVars = {
   pharmacy_name: "Your Pharmacy Name",
@@ -414,7 +422,10 @@ const smsVars = {
   account_number: "1234567890"
 };
 const response = await commService.sendSMS(selectedDebtors, null, smsVars);
+// Default SMS will include: 60+ days arrears AND total balance
 ```
+
+**See `FRONTEND_TOTAL_BALANCE_GUIDE.md` for complete details on the total balance feature.**
 
 ---
 
